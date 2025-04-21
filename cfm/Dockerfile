@@ -1,29 +1,21 @@
-# ──────────────────────────
-# Stage 1: Build the Go wrapper (modules OFF)
-# ──────────────────────────
-FROM golang:1.24 AS builder
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git
+
 WORKDIR /cfmid
 
-# Disable modules so we can compile without go.mod/go.sum
-ENV GO111MODULE=off
+COPY go.mod go.sum ./
+RUN go mod tidy
 
-# Copy only the wrapper source
-COPY wrapper.go ./
-
-# Build the binary directly
+COPY . .
 RUN go build -o cfm-server wrapper.go
 
-# ──────────────────────────
-# Stage 2: Final image with CFM-ID
-# ──────────────────────────
 FROM wishartlab/cfmid:latest
 WORKDIR /cfmid
 
-# Copy the compiled binary from the builder stage
-COPY --from=builder /cfmid/cfm-server /cfmid/cfm-server
+COPY --from=builder /cfmid/cfm-server .
 
-# Expose the HTTP port
+RUN chmod +x cfm-server
+
 EXPOSE 5001
-
-# Run the server
-CMD ["./cfm-server"]
+ENTRYPOINT ["./cfm-server"]
