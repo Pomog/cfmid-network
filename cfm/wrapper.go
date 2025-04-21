@@ -11,12 +11,18 @@ import (
 	"time"
 )
 
+func healthzHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
 func predictHandler(w http.ResponseWriter, r *http.Request) {
 	// Only accept POST
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad form data", http.StatusBadRequest)
 		return
@@ -52,17 +58,26 @@ func predictHandler(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.CommandContext(ctx, "cfm-predict",
 		inFile.Name(),
 		"0.001",
-		"/trained_models_cfmid4.0/[M+H]+/param_output.log",
-    "/trained_models_cfmid4.0/[M+H]+/param_config.txt",
+		"/trained_models_cfmid4.0/cfmid4/[M+H]+/param_output.log",
+		"/trained_models_cfmid4.0/cfmid4/[M+H]+/param_config.txt",
 		"0", // no fragment annotation
 		outFile.Name(),
 		"1", // postprocessing
 		"0", // suppress exceptions
 	)
-  
 
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Stdout failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Stderr failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	if err := cmd.Start(); err != nil {
 		http.Error(w, fmt.Sprintf("Start failed: %v", err), http.StatusInternalServerError)
 		return
@@ -79,7 +94,15 @@ func predictHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	http.HandleFunc("/predict", predictHandler)
-	log.Println("CFM-ID wrapper listening on :5001")
-	log.Fatal(http.ListenAndServe(":5001", nil))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/predict", predictHandler)
+	mux.HandleFunc("/healthz", healthzHandler)
+
+	srv := &http.Server{
+		Addr:    ":5001",
+		Handler: mux,
+	}
+
+	log.Println("🚀 CFM-ID wrapper starting on http://0.0.0.0:5001")
+	log.Fatal(srv.ListenAndServe())
 }
