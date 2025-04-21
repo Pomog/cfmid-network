@@ -80,6 +80,6 @@ func predictHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/predict", predictHandler)
-	log.Println("CFM‑ID wrapper listening on :5001")
+	log.Println("CFM-ID wrapper listening on :5001")
 	log.Fatal(http.ListenAndServe(":5001", nil))
 }
