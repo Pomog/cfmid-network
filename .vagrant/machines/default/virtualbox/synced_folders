@@ -1,0 +1,1 @@
+{"virtualbox":{"/home/vagrant/cfm":{"guestpath":"/home/vagrant/cfm","hostpath":"F:/cfmid-network/cfmid-network/cfm","disabled":false,"__vagrantfile":true},"/vagrant":{"guestpath":"/vagrant","hostpath":"F:/cfmid-network/cfmid-network","disabled":false,"__vagrantfile":true}}}
