@@ -1,19 +1,16 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
-	"time"
 )
 
 func healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	w.Write([]byte("OK\n"))
 }
 
 func predictHandler(w http.ResponseWriter, r *http.Request) {
@@ -27,22 +24,31 @@ func predictHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad form data", http.StatusBadRequest)
 		return
 	}
+
+	// Read parameters
+	prob := r.FormValue("prob_thresh")
+	if prob == "" {
+		prob = "0.001"
+	}
+
 	smiles := r.FormValue("smiles")
 	if smiles == "" {
 		http.Error(w, "Missing 'smiles' parameter", http.StatusBadRequest)
 		return
 	}
 
-	// Create temp files (unique per request)
+	// Create input file in file-mode: need an ID and SMILES per line
 	inFile, err := os.CreateTemp("", "cfm-in-*.txt")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Create input file failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer os.Remove(inFile.Name())
-	inFile.WriteString(smiles)
+	// Write ID (M1) and SMILES
+	inFile.WriteString(fmt.Sprintf("M1 %s\n", smiles))
 	inFile.Close()
 
+	// Create temp output file
 	outFile, err := os.CreateTemp("", "cfm-out-*.txt")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Create output file failed: %v", err), http.StatusInternalServerError)
@@ -51,52 +57,37 @@ func predictHandler(w http.ResponseWriter, r *http.Request) {
 	defer os.Remove(outFile.Name())
 	outFile.Close()
 
-	// Timeout context
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "cfm-predict",
-		inFile.Name(),
-		"0.001",
+	// Run CFM-ID in file mode
+	cmd := exec.Command(
+		"cfm-predict",
+		inFile.Name(), // input file with ID SMILES
+		prob,          // prob_thresh
 		"/trained_models_cfmid4.0/cfmid4/[M+H]+/param_output.log",
 		"/trained_models_cfmid4.0/cfmid4/[M+H]+/param_config.txt",
-		"0", // no fragment annotation
-		outFile.Name(),
-		"1", // postprocessing
-		"0", // suppress exceptions
+		"1",            // annotate_fragments = YES
+		outFile.Name(), // output file
+		"1",            // apply_postproc
+		"0",            // suppress_exceptions
 	)
 
-	stdout, err := cmd.StdoutPipe()
+	if err := cmd.Run(); err != nil {
+		http.Error(w, fmt.Sprintf("cfm-predict failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	result, err := os.ReadFile(outFile.Name())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Stdout failed: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Read result failed: %v", err), http.StatusInternalServerError)
 		return
 	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Stderr failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		http.Error(w, fmt.Sprintf("Start failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	// Stream stderr first (warnings), then stdout
-	go io.Copy(w, stderr)
-	io.Copy(w, stdout)
-
-	if err := cmd.Wait(); err != nil {
-		log.Printf("cfm-predict error: %v", err)
-	}
+	w.Write(result)
 }
 
 func main() {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/predict", predictHandler)
 	mux.HandleFunc("/healthz", healthzHandler)
+	mux.HandleFunc("/predict", predictHandler)
 
 	srv := &http.Server{
 		Addr:    ":5001",
